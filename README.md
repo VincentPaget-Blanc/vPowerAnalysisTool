@@ -34,8 +34,10 @@ pip install tkinter pandas statsmodels openpyxl
 
 ### Step 2: Select Columns
 
-- For t-test and One-way ANOVA:
+- For t-test:
   - Select the columns representing the groups you want to compare from the "Group 1 Column" and "Group 2 Column" dropdown menus.
+    
+- For One-way ANOVA:
 
 - For Two-way ANOVA:
   - Select the columns representing the factor levels from the "Factor 1 Level 1 Column," "Factor 1 Level 2 Column," "Factor 2 Level 1 Column," and "Factor 2 Level 2 Column" dropdown menus.
