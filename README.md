@@ -126,6 +126,8 @@ Power analysis is used to determine the sample size required to detect an effect
 
 The number of biological replicates required is calculated by dividing the required sample size by the number of samples in the provided dataset:
 
+Biological Replicates = Required Sample Size / n
+
 \[ \text{Biological Replicates} = \frac{\text{Required Sample Size}}{n} \]
 
 where \( n \) is the number of samples in the provided dataset.
@@ -170,4 +172,3 @@ where \( n \) is the number of samples in the provided dataset.
 ## License
 
 This project is licensed under the GNU General Public License v3.0. See the [LICENSE](LICENSE) file for details.
-
