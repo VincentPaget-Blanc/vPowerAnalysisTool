@@ -1,6 +1,6 @@
 # vPowerAnalysisTool
 
-The vPowerAnalysisTool is a graphical user interface (GUI) application designed to help researchers perform power analysis for t-tests, one-way ANOVA, and two-way ANOVA. This tool calculates the required sample size and the number of biological replicates needed to achieve a specified statistical power. It is expecting n data from one biological replicate. 
+The vPowerAnalysis Tool is a graphical user interface (GUI) application designed to help researchers perform power analysis for t-tests, one-way ANOVA, and two-way ANOVA. This tool calculates the required sample size and the number of biological replicates needed to achieve a specified statistical power. It also checks for data normality and applies transformations if necessary to ensure the validity of parametric tests. It is expecting n data from one biological replicate.
 
 ## Table of Contents
 
@@ -9,7 +9,8 @@ The vPowerAnalysisTool is a graphical user interface (GUI) application designed 
 3. [Data Organization](#data-organization)
 4. [Calculations](#calculations)
 5. [Examples](#examples)
-6. [License](#license)
+6. [Troubleshooting](#troubleshooting)
+7. [License](#license)
 
 ## Installation
 
@@ -18,10 +19,12 @@ To run the Power Analysis Tool, you need to have Python installed on your comput
 - pandas
 - tkinter
 - statsmodels
+- scipy
+- numpy
 - openpyxl
 
 ```bash
-pip install tkinter pandas statsmodels openpyxl
+pip install pandas tkinter statsmodels scipy numpy openpyxl
 ```
 
 ## Usage
@@ -30,17 +33,19 @@ pip install tkinter pandas statsmodels openpyxl
 
 1. Click the "Load Data File" button to open a file dialog.
 2. Select an Excel or CSV file containing your data.
-3. The column names from the file will be displayed in the dropdown menus.
+3. The tool will automatically check for data normality and apply transformations if necessary.
+4. The column names from the file will be displayed in the dropdown menus.
 
 ### Step 2: Select Columns
 
-- For t-test:
-  - Select the columns representing the groups you want to compare from the "Group 1 Column" and "Group 2 Column" dropdown menus.
-    
-- For One-way ANOVA:
+- **For t-test**: Select the columns representing the two groups you want to compare from the "Group 1 Column" and "Group 2 Column" dropdown menus.
 
-- For Two-way ANOVA:
-  - Select the columns representing the factor levels from the "Factor 1 Level 1 Column," "Factor 1 Level 2 Column," "Factor 2 Level 1 Column," and "Factor 2 Level 2 Column" dropdown menus.
+- **For One-way ANOVA**:
+  1. Enter the number of groups in the "Number of Groups" field.
+  2. Click "Update" to generate the appropriate number of dropdown menus.
+  3. Select the columns representing each group from the generated dropdown menus.
+
+- **For Two-way ANOVA**: Select the columns representing the factor levels from the "Factor 1 Level 1 Column," "Factor 1 Level 2 Column," "Factor 2 Level 1 Column," and "Factor 2 Level 2 Column" dropdown menus.
 
 ### Step 3: Set Parameters
 
@@ -61,7 +66,7 @@ Click the "Perform Power Analysis and Generate Report" button to perform the pow
 
 ### Step 6: Save the Report
 
-1. An Excel report will be generated with the results of the power analysis.
+1. An Excel report will be generated with the results of the power analysis, including information on data normality and transformation success.
 2. Choose the location and name for the report file.
 3. Click "Save" to save the report.
 
@@ -134,7 +139,17 @@ where \( n \) is the number of samples in the provided dataset.
 5. Click "Perform Power Analysis and Generate Report."
 6. Save the Excel report.
 
-### Example 2: Two-way ANOVA
+### Example 2: One-way ANOVA
+
+1. Load a data file with multiple columns representing different groups.
+2. Enter the number of groups in the "Number of Groups" field and click "Update."
+3. Select the columns for each group from the generated dropdown menus.
+4. Set Alpha to 0.05 and Power to 0.8.
+5. Choose "One-way ANOVA" from the Statistical Test dropdown menu.
+6. Click "Perform Power Analysis and Generate Report."
+7. Save the Excel report.
+
+### Example 3: Two-way ANOVA
 
 1. Load a data file with four columns representing the combinations of factor levels.
 2. Select the columns for Factor 1 Level 1, Factor 1 Level 2, Factor 2 Level 1, and Factor 2 Level 2.
@@ -142,6 +157,13 @@ where \( n \) is the number of samples in the provided dataset.
 4. Choose "Two-way ANOVA" from the Statistical Test dropdown menu.
 5. Click "Perform Power Analysis and Generate Report."
 6. Save the Excel report.
+
+## Troubleshooting
+
+- **Data Loading Issues**: Ensure that your data file is correctly formatted and that the column names are properly defined.
+- **Dropdown Menus Not Updating**: If the dropdown menus do not update correctly when switching test types, ensure that the data is loaded and the column names are correctly specified.
+- **Analysis Errors**: If you encounter errors during the analysis, verify that the input parameters (Alpha, Power) are correctly set and that the selected columns contain valid data.
+- **Normality and Transformation Issues**: If the tool indicates that data is not normally distributed and transformations were not successful, consider using non-parametric tests or consulting a statistician for further advice.
 
 ## License
 
