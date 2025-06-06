@@ -108,10 +108,12 @@ Each combination of factor levels should be in a separate column. For example, i
 
 Cohen's d is a measure of effect size used to indicate the standard difference between two means. It is calculated as follows:
 
+d = (M1 - M2) / s_pooled
 \[ d = \frac{M_1 - M_2}{s_{\text{pooled}}} \]
 
 where \( M_1 \) and \( M_2 \) are the means of the two groups, and \( s_{\text{pooled}} \) is the pooled standard deviation, calculated as:
 
+s_pooled = sqrt( ((n1 - 1) * s1^2 + (n2 - 1) * s2^2) / (n1 + n2 - 2) )
 \[ s_{\text{pooled}} = \sqrt{\frac{(n_1 - 1)s_1^2 + (n_2 - 1)s_2^2}{n_1 + n_2 - 2}} \]
 
 where \( s_1 \) and \( s_2 \) are the standard deviations of the two groups, and \( n_1 \) and \( n_2 \) are the sample sizes.
@@ -168,3 +170,4 @@ where \( n \) is the number of samples in the provided dataset.
 ## License
 
 This project is licensed under the GNU General Public License v3.0. See the [LICENSE](LICENSE) file for details.
+
