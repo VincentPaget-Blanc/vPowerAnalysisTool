@@ -21,7 +21,7 @@ To run the Power Analysis Tool, you need to have Python installed on your comput
 - openpyxl
 
 ```bash
-pip install pandas statsmodels openpyxl
+pip install tkinter pandas statsmodels openpyxl
 ```
 
 ## Usage
