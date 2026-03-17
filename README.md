@@ -1,6 +1,6 @@
 # vPowerAnalysisTool
 
-The vPowerAnalysis Tool is a graphical user interface (GUI) application designed to help researchers perform power analysis for t-tests, one-way ANOVA, and two-way ANOVA. This tool calculates the required sample size and the number of biological replicates needed to achieve a specified statistical power. It also checks for data normality and applies transformations if necessary to ensure the validity of parametric tests.
+The vPowerAnalysis Tool is a graphical user interface (GUI) application designed to help researchers perform power analysis for t-tests, one-way ANOVA, two-way ANOVA, Mann-Whitney U, and Kruskal-Wallis tests. This tool calculates the required sample size and the number of biological replicates needed to achieve a specified statistical power. For parametric tests it checks data normality and applies transformations where necessary; non-parametric tests are assumption-free with respect to distribution shape and require no transformation.
 
 > **Note on pilot data:** The tool expects pilot data in which each row represents one technical replicate from a single biological replicate. The biological replicate estimate is derived from this assumption and should be interpreted accordingly.
 
@@ -36,16 +36,16 @@ pip install pandas statsmodels scipy numpy openpyxl matplotlib
 
 ### Step 2: Select Columns
 
-- **For t-test:** Select the columns representing the two groups from the **Group 1** and **Group 2** dropdown menus.
+- **For t-test / Mann-Whitney U:** Select the columns representing the two groups from the **Group 1** and **Group 2** dropdown menus.
 
-- **For One-way ANOVA:**
+- **For One-way ANOVA / Kruskal-Wallis:**
   1. Enter the number of groups in the **Number of Groups** field.
   2. Click **Update Groups** to generate the appropriate dropdown menus.
   3. Select the column for each group.
 
 - **For Two-way ANOVA:** Select the four columns representing each cell of the 2×2 design from the labelled dropdown menus (A1B1, A1B2, A2B1, A2B2).
 
-> **Prospective analysis (no pilot data):** Check **Override effect size manually** to enter a Cohen's d or Cohen's f value directly from the literature. Hover over the checkbox or the entry field for conventional benchmarks (small / medium / large).
+> **Prospective analysis (no pilot data):** Check **Override effect size manually** to enter an effect size directly from the literature. The label updates automatically to show the correct metric for the selected test. Hover over the entry field for conventional benchmarks (small / medium / large).
 
 ### Step 3: Set Parameters
 
@@ -60,18 +60,23 @@ Both fields are highlighted red if the entered value is outside the valid range 
 
 Select the test type from the **Statistical Test** dropdown:
 
-- **t-test** — independent-samples t-test between two groups
-- **One-way ANOVA** — comparison across two or more groups
-- **Two-way ANOVA** — 2×2 factorial design with main effects and interaction
+| Test | Type | Groups |
+|---|---|---|
+| **t-test** | Parametric | 2 |
+| **One-way ANOVA** | Parametric | ≥ 2 |
+| **Two-way ANOVA** | Parametric | 4 cells (2×2 design) |
+| **Mann-Whitney U** | Non-parametric | 2 |
+| **Kruskal-Wallis** | Non-parametric | ≥ 2 |
 
 ### Step 5: Perform Power Analysis
 
 Click **Perform Power Analysis**. Results appear immediately in the persistent **Results** panel below, including:
 
-- Effect size (Cohen's d for t-test; Cohen's f per effect for ANOVA)
-- Required sample size (ceiling)
+- Effect size and its metric (see [Calculations](#calculations) for details per test)
+- Required sample size per group or cell (ceiling)
 - Estimated biological replicates
-- Per-column normality status and any transformation applied
+- For parametric tests: per-column normality status and any transformation applied
+- For non-parametric tests: a note confirming no transformation was applied
 
 An embedded **power curve** (power vs. n-per-group or n-per-cell) is drawn below the results panel when matplotlib is available.
 
@@ -80,7 +85,7 @@ An embedded **power curve** (power vs. n-per-group or n-per-cell) is drawn below
 Click **Save Excel Report** (enabled only after a successful analysis) to save a multi-sheet Excel file containing:
 
 - **Summary** — key parameters and results
-- **Normality** — per-column Shapiro-Wilk result and transformation applied
+- **Normality** — per-column Shapiro-Wilk result and transformation applied *(parametric tests only)*
 - **Two-way ANOVA Details** *(two-way ANOVA only)* — Cohen's f and required n per cell for each effect (Factor A, Factor B, Interaction A×B)
 
 ### Step 7: Reset
@@ -89,7 +94,7 @@ Click **Reset** at any time to clear all loaded data and results and return the 
 
 ## Data Organization
 
-### For t-test
+### For t-test and Mann-Whitney U
 
 Organise data into two columns, one per group.
 
@@ -99,7 +104,7 @@ Organise data into two columns, one per group.
 | 12 | 9 |
 | 14 | 11 |
 
-### For One-way ANOVA
+### For One-way ANOVA and Kruskal-Wallis
 
 Each group occupies a separate column.
 
@@ -130,7 +135,7 @@ Where the column labels denote:
 
 ## Calculations
 
-### Normality Check and Transformation
+### Normality Check and Transformation *(parametric tests only)*
 
 Each selected column is tested for normality using the **Shapiro-Wilk test** (α = 0.05) at analysis time. Normality checks are performed on the selected columns only and do not alter other columns in the dataset.
 
@@ -145,6 +150,8 @@ If a column is not normally distributed, the tool attempts:
 
 If neither transformation achieves normality, the raw data is used and a warning is recorded in the results and report. In this case, consider using a non-parametric test.
 
+> **Mann-Whitney U and Kruskal-Wallis** perform no normality check and apply no transformation. They operate directly on the raw data.
+
 ### Cohen's d (t-test)
 
 Cohen's d measures the standardised difference between two group means:
@@ -156,6 +163,8 @@ s_pooled = sqrt( ((n1−1)·s1² + (n2−1)·s2²) / (n1 + n2 − 2) )
 ```
 
 The absolute value is taken to ensure the effect size passed to the power function is always non-negative.
+
+Conventions: small 0.2 · medium 0.5 · large 0.8
 
 ### Cohen's f (ANOVA)
 
@@ -182,7 +191,57 @@ where σ_between is the weighted standard deviation of group means around the gr
 
 A separate required sample size is computed for each effect. The most conservative (largest) n per cell is reported as the design requirement. Each effect is modelled as a 2-group one-way ANOVA (consistent with G*Power conventions); note that this is an approximation because it does not account for the shared error degrees of freedom structure of a two-way design.
 
-### Power Analysis
+Conventions: small 0.1 · medium 0.25 · large 0.4
+
+### Rank-biserial correlation r (Mann-Whitney U)
+
+The rank-biserial correlation is the effect size for the Mann-Whitney U test:
+
+```
+r = abs( 2·max(U1, U2) / (n1·n2) − 1 )
+```
+
+Equivalently, `r = abs(2p − 1)` where `p = P(X1 > X2)`. A value of 0 indicates complete overlap between the two distributions; a value of 1 indicates perfect separation.
+
+Required n per group is computed using the **Noether (1987)** formula:
+
+```
+n = (z_α/2 + z_β)² / (12·(p − 0.5)²)     where p = (r + 1) / 2
+```
+
+*Reference: Noether GE (1987). Sample size determination for some common nonparametric tests. JASA 82(398), 645–647.*
+
+Conventions: small 0.1 · medium 0.3 · large 0.5
+
+### Eta-squared η² and H statistic (Kruskal-Wallis)
+
+The Kruskal-Wallis H statistic is computed from the pilot data. The internal effect-size scaling parameter is:
+
+```
+λ/n = H_pilot / n_total
+```
+
+This quantity scales linearly with sample size for a fixed underlying effect, allowing power to be projected to any target n.
+
+Eta-squared is also reported for interpretability:
+
+```
+η² = max(0, (H − k + 1) / (n − k))
+```
+
+*Reference: Tomczak M & Tomczak E (2014). The need to report effect size estimates revisited. Trends Sport Sci 1(21), 19–25.*
+
+Required n per group (balanced design) is found by solving:
+
+```
+P( χ²(k−1, λ/n × k×n) > χ²_crit(α, k−1) ) = target power
+```
+
+using Brent's root-finding method with `scipy.stats.ncx2` (non-central chi-squared).
+
+Conventions (η²): small 0.01 · medium 0.06 · large 0.14
+
+### Power Analysis — parametric tests
 
 Required sample sizes are calculated using the `statsmodels` library:
 
@@ -230,11 +289,31 @@ where n_pilot is the number of non-missing observations in the first selected co
 5. Click **Perform Power Analysis**. The results panel shows Cohen's f and required n per cell for each of the three effects (Factor A, Factor B, Interaction A×B) separately.
 6. Click **Save Excel Report** to save the full results including the per-effect breakdown sheet.
 
-### Example 4: Prospective analysis (no pilot data)
+### Example 4: Mann-Whitney U
+
+1. Load a data file with two numeric columns representing two groups.
+2. Select the columns for **Group 1** and **Group 2**.
+3. Set Alpha to `0.05` and Power to `0.80`.
+4. Choose **Mann-Whitney U** from the Statistical Test dropdown.
+5. Click **Perform Power Analysis**. The results panel reports the rank-biserial correlation r and P(X1 > X2) from the pilot data, the required n per group, and the biological replicate estimate.
+6. Click **Save Excel Report**.
+
+### Example 5: Kruskal-Wallis
+
+1. Load a data file with one column per group.
+2. Enter the number of groups and click **Update Groups**.
+3. Select the column for each group.
+4. Set Alpha to `0.05` and Power to `0.80`.
+5. Choose **Kruskal-Wallis** from the Statistical Test dropdown.
+6. Click **Perform Power Analysis**. The results panel reports H, η², and the required n per group.
+7. Click **Save Excel Report**.
+
+### Example 6: Prospective analysis (no pilot data)
 
 1. Check **Override effect size manually**.
-2. Enter an effect size from the literature (Cohen's d for t-test; Cohen's f for ANOVA).
-3. Set Alpha and Power, choose the test type, and click **Perform Power Analysis**.
+2. Select the test type — the effect size label updates to show the correct metric (Cohen's d, Cohen's f, rank-biserial r, or η²).
+3. Enter an effect size from the literature.
+4. Set Alpha and Power, then click **Perform Power Analysis**.
 
 ## Troubleshooting
 
@@ -244,11 +323,20 @@ where n_pilot is the number of non-missing observations in the first selected co
 | **Columns not appearing in dropdowns** | Only numeric columns are loaded. Check that your data columns contain numbers and not text or mixed types. |
 | **"Please select a valid column" error** | Ensure a column is selected in every group dropdown before running the analysis. |
 | **Alpha / Power field highlighted red** | Both values must be numbers strictly between 0 and 1. |
-| **"Not normal — Failed — used raw data"** | Neither log nor Box-Cox normalised the column. Results may be less reliable; consider a non-parametric test or consult a statistician. |
+| **"Not normal — Failed — used raw data"** | Neither log nor Box-Cox normalised the column. Results may be less reliable; consider using Mann-Whitney U or Kruskal-Wallis instead. |
 | **Power curve not shown** | Install matplotlib (`pip install matplotlib`) and restart the tool. |
 | **Two-way ANOVA gives very large n** | This can occur when one effect has a very small Cohen's f. Check whether the interaction or a main effect is the limiting factor in the per-effect breakdown. |
+| **Kruskal-Wallis "could not determine required n"** | The pilot H statistic may be near zero (groups are nearly identical). Try a larger pilot sample or check your data. |
+| **Effect size r or η² out of range error (manual mode)** | Rank-biserial r and η² must be strictly between 0 and 1. Use the tooltip benchmarks as a guide. |
 
 ## Changelog
+
+### v0.5.0
+- **[N1] Mann-Whitney U** added as a first-class test option. Effect size: rank-biserial correlation r. Required n: Noether (1987) formula. No normality assumption; no transformation applied.
+- **[N2] Kruskal-Wallis** added as a first-class test option for ≥ 2 groups. Effect size: H/n (NCP scaling parameter); eta-squared η² also reported. Required n: chi-squared NCP solved via Brent's method using `scipy.stats.ncx2`. No normality assumption; no transformation applied.
+- **[N3] Manual mode extended** for both new tests: enter rank-biserial r for Mann-Whitney U; enter η² for Kruskal-Wallis. Range validation (0–1) enforced.
+- **[N4] Power curve updated** to cover all five test types using the correct per-test formula.
+- **[N5] Dynamic effect-size label** in manual mode — updates automatically when the test type is changed to show the correct metric name and expected range.
 
 ### v0.4.0
 - **[S1] Correct effect size for ANOVA:** Replaced averaged Cohen's d with Cohen's f (σ_between / σ_within) throughout all ANOVA analyses. Using d with `FTestAnovaPower` produced statistically invalid sample-size estimates.

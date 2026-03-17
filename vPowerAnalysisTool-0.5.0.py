@@ -1,9 +1,42 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Fri Jun  6 10:41:44 2025
+vPowerAnalysisTool  v0.5.0
 
-vPowerAnalysisTool  v0.4.0
+NEW IN v0.5.0
+═══════════════════════════════════════════════════════
+
+  [N1] Mann-Whitney U added as a first-class test option (not a fallback).
+       Effect size: rank-biserial correlation r = abs(2·max(U1,U2)/(n1·n2) − 1).
+       Required n: Noether (1987) formula
+         n = (z_α/2 + z_β)² / (12·(p − 0.5)²)   where p = (r+1)/2
+       No normality check or transformation is applied — this is a rank-based
+       test that is assumption-free with respect to distribution shape.
+
+  [N2] Kruskal-Wallis added as a first-class test option for ≥2 groups.
+       Effect size: H_pilot / n_total  (the per-observation non-centrality
+         parameter; η² is reported alongside for interpretability).
+       Required n: chi-squared NCP scaling
+         λ = (H/n)·n_target ;  Power = P(χ²(k−1, λ) > χ²_crit(α, k−1))
+         Solved via Brent's method (scipy.optimize.brentq).
+       No normality check or transformation is applied.
+
+  [N3] Manual (prospective) mode extended for both new tests:
+       • Mann-Whitney U: enter rank-biserial r directly (range 0–1).
+       • Kruskal-Wallis: enter eta-squared η² directly (range 0–1).
+         For large n the approximation λ/n ≈ η² holds; this is equivalent to
+         the G*Power approach of specifying an a-priori effect size.
+
+  [N4] Power curve updated to cover all five test types.
+       • Mann-Whitney U: Noether inverse formula.
+       • Kruskal-Wallis: chi-squared NCP formula.
+
+  [N5] Manual-mode effect-size label is now dynamic — it updates when the
+       test type is changed to show the correct metric name and range.
+
+═══════════════════════════════════════════════════════
+CHANGES FROM v0.3.0  (carried forward from v0.4.0)
+═══════════════════════════════════════════════════════
 
 ═══════════════════════════════════════════════════════
 CHANGES FROM v0.3.0
@@ -100,14 +133,13 @@ UX IMPROVEMENTS
 
   [U10] Tooltips on Alpha, Power, Effect Size, and Biological Replicates fields
         explain what each parameter means and give typical values.
-        
-@author: vincentpb
 """
 
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import pandas as pd
 from statsmodels.stats.power import TTestIndPower, FTestAnovaPower
+from scipy.optimize import brentq
 import math
 import os
 import scipy.stats as stats
@@ -122,7 +154,7 @@ try:
 except ImportError:
     MATPLOTLIB_AVAILABLE = False
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -358,6 +390,127 @@ def cohen_f_twoway(groups):
     }
 
 
+# ── Non-parametric effect sizes and power formulae ───────────────────────────
+
+def rank_biserial_r(g1, g2):
+    """
+    [N1] Rank-biserial correlation r for the Mann-Whitney U test.
+
+    r = abs( 2·max(U1, U2) / (n1·n2) − 1 )
+
+    Using max(U1, U2) ensures r ≥ 0 regardless of which group has the
+    larger values.  Equivalent to abs(2p − 1) where p = P(X1 > X2).
+
+    Interpretation:  r=0 → complete overlap (p=0.5, no effect).
+                     r=1 → perfect separation.
+    Conventions (Cohen 1992):  small 0.1 · medium 0.3 · large 0.5
+    """
+    g1, g2 = g1.dropna(), g2.dropna()
+    n1, n2 = len(g1), len(g2)
+    if n1 < 2 or n2 < 2:
+        raise ValueError("Each group needs at least 2 observations.")
+    U1, _ = stats.mannwhitneyu(g1, g2, alternative="two-sided")
+    U2    = n1 * n2 - U1
+    r     = abs(2 * max(U1, U2) / (n1 * n2) - 1)
+    return r
+
+
+def mwu_required_n(r, alpha, power):
+    """
+    [N1] Required n per group for the Mann-Whitney U test.
+
+    Noether (1987) formula — Biometrics 43(1), 134-137:
+      n = (z_α/2 + z_β)² / (12·(p − 0.5)²)
+    where p = (r + 1) / 2 = P(X1 > X2) when r ≥ 0.
+
+    Valid for equal group sizes (n1 = n2).
+    """
+    p   = (r + 1) / 2
+    if abs(p - 0.5) < 1e-10:
+        raise ValueError(
+            "Effect size r = 0 (p = 0.5) — the two groups are indistinguishable.")
+    z_a = stats.norm.ppf(1 - alpha / 2)
+    z_b = stats.norm.ppf(power)
+    return (z_a + z_b) ** 2 / (12 * (p - 0.5) ** 2)
+
+
+def mwu_power_at_n(r, alpha, n):
+    """
+    [N1, N4] Power of the Mann-Whitney U test at a given balanced n per group.
+
+    Noether (1987) power formula (inverse of mwu_required_n):
+      z_β = sqrt(12·n·(p − 0.5)²) − z_α/2
+      power = Φ(z_β)
+    """
+    p   = (r + 1) / 2
+    z_a = stats.norm.ppf(1 - alpha / 2)
+    z_b = math.sqrt(max(0.0, 12 * n * (p - 0.5) ** 2)) - z_a
+    return float(stats.norm.cdf(z_b))
+
+
+def kw_pilot_stats(groups):
+    """
+    [N2] Compute Kruskal-Wallis H and the per-observation NCP scaling factor.
+
+    Returns (H, lambda_per_n, k, n_total, eta_sq) where:
+      lambda_per_n = H / n_total   — scales linearly with n for fixed effect.
+      eta_sq = max(0, (H − k + 1) / (n − k))  — reported for interpretability
+               (Tomczak & Tomczak 2014).
+
+    The NCP of H is approximately lambda_per_n × n_target, giving
+    Power = P(χ²(k−1, ncp) > χ²_crit(α, k−1)).
+    """
+    groups = [g.dropna() for g in groups]
+    if len(groups) < 2:
+        raise ValueError("Kruskal-Wallis requires at least 2 groups.")
+    if any(len(g) < 2 for g in groups):
+        raise ValueError("Every group needs at least 2 observations.")
+    H, _  = stats.kruskal(*[g.values for g in groups])
+    k     = len(groups)
+    n     = sum(len(g) for g in groups)
+    eta_sq = max(0.0, (H - k + 1) / (n - k))
+    return H, H / n, k, n, eta_sq
+
+
+def kw_required_n(lambda_per_n, k, alpha, power):
+    """
+    [N2] Required n per group (balanced) for the Kruskal-Wallis test.
+
+    Solves Power = P(χ²(k−1, λ) > χ²_crit) = target_power for n_per_group,
+    where λ = lambda_per_n × (n_per_group × k).
+
+    Uses scipy.stats.ncx2 (non-central chi-squared) and scipy.optimize.brentq.
+    """
+    if lambda_per_n <= 0:
+        raise ValueError(
+            "Effect size is zero — all groups have identical rank distributions.")
+    df        = k - 1
+    chi2_crit = stats.chi2.ppf(1 - alpha, df)
+
+    def residual(n_total):
+        lam = lambda_per_n * n_total
+        return (1 - stats.ncx2.cdf(chi2_crit, df, lam)) - power
+
+    try:
+        n_total = brentq(residual, k * 2, k * 200_000)
+    except ValueError:
+        raise ValueError(
+            "Could not determine required n — the effect size may be too "
+            "small to achieve the target power within a feasible range.")
+    return n_total / k   # n per group for a balanced design
+
+
+def kw_power_at_n(lambda_per_n, k, alpha, n_per_group):
+    """
+    [N2, N4] Power of the Kruskal-Wallis test at a given balanced n per group.
+    Uses scipy.stats.ncx2 (non-central chi-squared).
+    """
+    df        = k - 1
+    chi2_crit = stats.chi2.ppf(1 - alpha, df)
+    lam       = lambda_per_n * (n_per_group * k)
+    return float(1 - stats.ncx2.cdf(chi2_crit, df, lam))
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  Application
 # ══════════════════════════════════════════════════════════════════════════════
@@ -456,7 +609,8 @@ class PowerAnalysisApp:
         self.test_var.trace_add("write", self._on_test_change)
         ttk.Combobox(
             cfg, textvariable=self.test_var,
-            values=["t-test", "One-way ANOVA", "Two-way ANOVA"],
+            values=["t-test", "One-way ANOVA", "Two-way ANOVA",
+                    "Mann-Whitney U", "Kruskal-Wallis"],
             state="readonly", width=22
         ).grid(row=0, column=1, sticky="w", padx=8, pady=5)
 
@@ -515,14 +669,17 @@ class PowerAnalysisApp:
                 "  Cohen's f — small: 0.1  medium: 0.25  large: 0.4")
 
         self.man_frame = ttk.Frame(cfg)
-        ttk.Label(self.man_frame, text="Effect size (d or f):").grid(
-            row=0, column=0, sticky="w")
+        self.man_lbl = ttk.Label(self.man_frame, text="Effect size (d or f):")  # [N5] updated dynamically
+        self.man_lbl.grid(row=0, column=0, sticky="w")
         self.man_ent = ttk.Entry(self.man_frame, width=10)
         self.man_ent.grid(row=0, column=1, padx=6)
         ToolTip(self.man_ent,
-                "Cohen's d for t-test (standardised mean difference).\n"
-                "Cohen's f = sigma_between / sigma_within for ANOVA.\n"
-                "Note: d and f are related by  f = d/2  only for balanced two-group ANOVA.")
+                "Cohen's d for t-test  (small 0.2 · medium 0.5 · large 0.8).\n"
+                "Cohen's f for ANOVA   (small 0.1 · medium 0.25 · large 0.4).\n"
+                "Rank-biserial r for Mann-Whitney U  (range 0–1; "
+                "small 0.1 · medium 0.3 · large 0.5).\n"
+                "Eta-squared η² for Kruskal-Wallis  (range 0–1; "
+                "small 0.01 · medium 0.06 · large 0.14).")
 
         # ── Action row  [U4] ─────────────────────────────────────────────────
         act = ttk.Frame(p)
@@ -691,19 +848,21 @@ class PowerAnalysisApp:
         self._update_dropdowns()
 
     def _on_test_change(self, *_):
-        """[C2] Rebuild group menus and hide/show One-way ANOVA helpers."""
+        """[C2, N5] Rebuild group menus; hide/show helpers; update manual label."""
         self._clear_groups()
         self.ng_frame.grid_forget()          # always hide; re-show if needed
         t = self.test_var.get()
 
         if t == "t-test":
             self._create_groups(2, ["Group 1", "Group 2"])
+            self.man_lbl.configure(text="Effect size — Cohen's d:")
 
         elif t == "One-way ANOVA":
             self.ng_frame.grid(row=1, column=0, columnspan=2,
                                sticky="w", padx=8, pady=4)
             n = int(self.ng_var.get()) if self.ng_var.get().isdigit() else 3
             self._create_groups(n, [f"Group {i+1}" for i in range(n)])
+            self.man_lbl.configure(text="Effect size — Cohen's f:")
 
         elif t == "Two-way ANOVA":
             self._create_groups(4, [
@@ -712,6 +871,18 @@ class PowerAnalysisApp:
                 "A2B1  (Factor A: lvl 2, Factor B: lvl 1)",
                 "A2B2  (Factor A: lvl 2, Factor B: lvl 2)",
             ])
+            self.man_lbl.configure(text="Effect size — Cohen's f:")
+
+        elif t == "Mann-Whitney U":                                      # [N1]
+            self._create_groups(2, ["Group 1", "Group 2"])
+            self.man_lbl.configure(text="Effect size — rank-biserial r  (0–1):")
+
+        elif t == "Kruskal-Wallis":                                      # [N2]
+            self.ng_frame.grid(row=1, column=0, columnspan=2,
+                               sticky="w", padx=8, pady=4)
+            n = int(self.ng_var.get()) if self.ng_var.get().isdigit() else 3
+            self._create_groups(n, [f"Group {i+1}" for i in range(n)])
+            self.man_lbl.configure(text="Effect size — eta-squared η²  (0–1):")
 
     def _update_group_count(self):
         """[C2] Re-create group menus with the user-specified group count."""
@@ -768,13 +939,17 @@ class PowerAnalysisApp:
                 self._analyse_oneway(cols, alpha, power)
             elif test == "Two-way ANOVA":
                 self._analyse_twoway(cols, alpha, power)
+            elif test == "Mann-Whitney U":               # [N1]
+                self._analyse_mwu(cols, alpha, power)
+            elif test == "Kruskal-Wallis":              # [N2]
+                self._analyse_kw(cols, alpha, power)
         except Exception as e:
             messagebox.showerror("Analysis error", str(e))
 
     # ── Analysis routines ─────────────────────────────────────────────────────
 
     def _analyse_manual(self, alpha, power, test):
-        """[U6] Prospective power analysis with a user-supplied effect size."""
+        """[U6, N3] Prospective power analysis with a user-supplied effect size."""
         try:
             es = float(self.man_ent.get())
             if es <= 0:
@@ -788,7 +963,31 @@ class PowerAnalysisApp:
                            effect_size=es, alpha=alpha, power=power)
             es_label = "Cohen's d"
             k        = 2
+
+        elif test == "Mann-Whitney U":                                   # [N3]
+            if not (0 < es < 1):
+                messagebox.showerror(
+                    "Input error",
+                    "Rank-biserial r must be strictly between 0 and 1.")
+                return
+            n        = mwu_required_n(es, alpha, power)
+            es_label = "rank-biserial r (manual)"
+            k        = 2
+
+        elif test == "Kruskal-Wallis":                                   # [N3]
+            if not (0 < es < 1):
+                messagebox.showerror(
+                    "Input error",
+                    "Eta-squared η² must be strictly between 0 and 1.")
+                return
+            k        = (int(self.ng_var.get())
+                        if self.ng_var.get().isdigit() else 3)
+            # lambda/n ≈ eta_sq is a valid approximation for large n
+            n        = kw_required_n(es, k, alpha, power)
+            es_label = "eta-squared η² (manual, approx)"
+
         else:
+            # One-way ANOVA or Two-way ANOVA
             k = (int(self.ng_var.get()) if test == "One-way ANOVA"
                                         and self.ng_var.get().isdigit() else 4)
             n        = FTestAnovaPower().solve_power(
@@ -799,7 +998,7 @@ class PowerAnalysisApp:
         n_ceil = math.ceil(n)
         lines  = [
             f"Test Type             : {test}",
-            f"Effect Size           : {es:.4f}  [{es_label}, manual entry]",
+            f"Effect Size           : {es:.4f}  [{es_label}]",
             f"Alpha (alpha)         : {alpha}",
             f"Power (1-beta)        : {power}",
             "-" * 58,
@@ -991,6 +1190,107 @@ class PowerAnalysisApp:
         self._show_results("\n".join(lines), dom_f, alpha, power,
                            "Two-way ANOVA", n_max, 2, n_per_cell=n_max)
 
+    def _analyse_mwu(self, cols, alpha, power):
+        """
+        [N1] Mann-Whitney U power analysis — Noether (1987) formula.
+
+        Effect size: rank-biserial r = abs(2·max(U1,U2)/(n1·n2) − 1)
+        Required n:  n = (z_α/2 + z_β)² / (12·(p − 0.5)²)
+                     where p = (r + 1) / 2
+
+        No normality test or transformation is applied; this test makes no
+        assumption about the underlying distribution shape.
+        """
+        g1 = self.original_data[cols[0]].dropna()
+        g2 = self.original_data[cols[1]].dropna()
+
+        r      = rank_biserial_r(g1, g2)
+        n      = mwu_required_n(r, alpha, power)
+        n_ceil = math.ceil(n)
+        n_obs  = len(g1)
+        bio    = n / n_obs
+
+        lines = [
+            f"Test Type              : Mann-Whitney U  (non-parametric)",
+            f"Columns                : {cols[0]}  vs  {cols[1]}",
+            f"Effect Size (r)        : {r:.4f}  [rank-biserial correlation]",
+            f"  p(X1 > X2)           : {(r + 1) / 2:.4f}",
+            f"Alpha (alpha)          : {alpha}",
+            f"Power (1-beta)         : {power}",
+            "-" * 58,
+            f"Required n per group   : {n_ceil}",
+            f"Biological replicates  : {bio:.2f}",
+            f"  [S7] Assumption — each row in pilot = 1 technical replicate",
+            f"       from a single biological replicate.",
+            "",
+            "Method: Noether (1987) Biometrics 43(1), 134-137.",
+            "No normality assumption; no transformation applied.",
+            "",
+            "Conventions (rank-biserial r):",
+            "  Small: 0.1    Medium: 0.3    Large: 0.5",
+        ]
+
+        self.last_results = dict(
+            cols=cols, es=r, es_label="rank-biserial r",
+            alpha=alpha, power=power, test="Mann-Whitney U",
+            n=n, n_per_cell=n, norm_info={}, details={}, k=2)
+        self._show_results("\n".join(lines), r, alpha, power,
+                           "Mann-Whitney U", n, 2, n_per_cell=n)
+
+    def _analyse_kw(self, cols, alpha, power):
+        """
+        [N2] Kruskal-Wallis power analysis — chi-squared NCP scaling.
+
+        Effect size: lambda/n = H_pilot / n_total  (NCP per observation).
+        Required n per group (balanced):
+          Solve  Power = P(χ²(k−1, lambda/n × k×n) > χ²_crit)  for n.
+
+        Eta-squared η² = max(0, (H−k+1)/(n−k)) is reported for
+        interpretability (Tomczak & Tomczak 2014).
+
+        No normality test or transformation is applied.
+        """
+        groups = [self.original_data[col].dropna() for col in cols]
+        H, lambda_per_n, k, n_total, eta_sq = kw_pilot_stats(groups)
+
+        n_per_group = kw_required_n(lambda_per_n, k, alpha, power)
+        n_ceil      = math.ceil(n_per_group)
+        n_obs       = len(groups[0])
+        bio         = n_per_group / n_obs
+
+        lines = [
+            f"Test Type              : Kruskal-Wallis  ({k} groups)",
+            f"Columns                : {', '.join(cols)}",
+            f"H statistic (pilot)    : {H:.4f}",
+            f"Eta-squared (η²)       : {eta_sq:.4f}  [= (H − k + 1) / (n − k)]",
+            f"  lambda/n (internal)  : {lambda_per_n:.6f}",
+            f"Alpha (alpha)          : {alpha}",
+            f"Power (1-beta)         : {power}",
+            "-" * 58,
+            f"Required n per group   : {n_ceil}",
+            f"Biological replicates  : {bio:.2f}",
+            f"  [S7] Assumption — each row in pilot = 1 technical replicate",
+            f"       from a single biological replicate.",
+            "",
+            "Method: chi-squared NCP scaling (H scales linearly with n).",
+            "No normality assumption; no transformation applied.",
+            "",
+            "Conventions (eta-squared η²):",
+            "  Small: 0.01   Medium: 0.06   Large: 0.14",
+        ]
+
+        self.last_results = dict(
+            cols=cols, es=lambda_per_n,
+            es_label="lambda/n  (H_pilot / n_pilot)",
+            alpha=alpha, power=power, test="Kruskal-Wallis",
+            n=n_per_group, n_per_cell=n_per_group, norm_info={},
+            details={"H": H, "eta_sq": eta_sq,
+                     "lambda_per_n": lambda_per_n, "k": k},
+            k=k)
+        self._show_results("\n".join(lines), lambda_per_n, alpha, power,
+                           "Kruskal-Wallis", n_per_group, k,
+                           n_per_cell=n_per_group)
+
     # ─────────────────────────────────────────────────────────────────────────
     #  Display results
     # ─────────────────────────────────────────────────────────────────────────
@@ -1031,8 +1331,13 @@ class PowerAnalysisApp:
                 if test == "t-test":
                     p = TTestIndPower().solve_power(
                             effect_size=es, alpha=alpha, nobs1=nv)
+                elif test == "Mann-Whitney U":                           # [N4]
+                    p = mwu_power_at_n(r=es, alpha=alpha, n=nv)
+                elif test == "Kruskal-Wallis":                          # [N4]
+                    p = kw_power_at_n(lambda_per_n=es, k=k,
+                                      alpha=alpha, n_per_group=nv)
                 else:
-                    # For two-way ANOVA, nv is n_per_cell so nobs = 2 x nv
+                    # ANOVA variants (One-way / Two-way)
                     nobs_arg = (nv * 2) if test == "Two-way ANOVA" else nv
                     p = FTestAnovaPower().solve_power(
                             effect_size=es, alpha=alpha,
